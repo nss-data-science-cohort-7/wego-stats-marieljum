@@ -1,0 +1,123 @@
+---
+title: "Analyzing WeGo Data with R"
+output: html_notebook
+---
+
+```{r}
+library(tidyverse)
+library(sf)
+library(lubridate)
+```
+
+```{r}
+headway <- read_csv("../data/headway_data_clean.csv")
+```
+
+**Part 1: Modeling Lateness**
+Recall that a bus would be considered late if it is more than 6 minutes late (based on the adherence value). A bus is early if it is more than one minute early based on adherence.
+
+Start by doing some simple overall aggregates. 
+*What percentage of the total stops are on time? How does this differ based on route? day of week? time of day?*
+```{r}
+headway |> 
+  summarise(ON_TIME = sum(ADHERENCE >= -1 & ADHERENCE <= 6, na.rm = TRUE)/ n(), 
+            LATE = sum(ADHERENCE >= 6, na.rm = TRUE)/ n(), 
+            EARLY = sum(ADHERENCE <= -1, na.rm = TRUE)/ n()) |> 
+  mutate(
+    ON_TIME = ON_TIME *100, 
+    LATE = LATE * 100, 
+    EARLY = EARLY * 100
+  )
+```
+Create a new column based on whether a ride was on time or not. 
+```{r}
+headway <- headway |> 
+  mutate(ON_TIME = ADHERENCE >= -1 & ADHERENCE <= 6)
+```
+
+*How does this differ based on route? day of week? time of day?*
+```{r}
+headway |> 
+  group_by(ROUTE_ABBR) |> 
+  summarise(ON_TIME = sum(ADHERENCE >= -1 & ADHERENCE <= 6, na.rm = TRUE)/ n(), 
+            LATE = sum(ADHERENCE >= 6, na.rm = TRUE)/ n(), 
+            EARLY = sum(ADHERENCE <= -1, na.rm = TRUE)/ n()) |> 
+  mutate(
+    ON_TIME = ON_TIME *100, 
+    LATE = LATE * 100, 
+    EARLY = EARLY * 100
+  )
+```
+
+*How does this differ based on day of week? time of day?*
+Create a new column that states the day of the week the ride occurred.
+```{r}
+headway <- headway |> 
+  mutate(DAY_OF_WEEK = weekdays(DATE))
+```
+
+```{r}
+str(headway)
+```
+
+
+```{r}
+headway |> 
+  group_by(DAY_OF_WEEK) |> 
+  summarise(ON_TIME = sum(ADHERENCE >= -1 & ADHERENCE <= 6, na.rm = TRUE)/ n(), 
+            LATE = sum(ADHERENCE >= 6, na.rm = TRUE)/ n(), 
+            EARLY = sum(ADHERENCE <= -1, na.rm = TRUE)/ n()) |> 
+  mutate(
+    ON_TIME = ON_TIME *100, 
+    LATE = LATE * 100, 
+    EARLY = EARLY * 100
+  )
+```
+
+*How does this differ based on time of day?*
+Create a new column that states the day of the week the ride occurred.
+```{r}
+headway <- headway |> 
+  mutate(HOUR_OF_DAY = hour(SCHEDULED_TIME))
+```
+
+```{r}
+headway |> 
+  group_by(HOUR_OF_DAY) |> 
+  summarise(ON_TIME = sum(ADHERENCE >= -1 & ADHERENCE <= 6, na.rm = TRUE)/ n(), 
+            LATE = sum(ADHERENCE >= 6, na.rm = TRUE)/ n(), 
+            EARLY = sum(ADHERENCE <= -1, na.rm = TRUE)/ n()) |> 
+  mutate(
+    ON_TIME = ON_TIME *100, 
+    LATE = LATE * 100, 
+    EARLY = EARLY * 100
+  )
+```
+
+Now, consider the operators. 
+*Which operators have the highest and lowest on-time percentages?*
+```{r}
+headway |> 
+  group_by(OPERATOR) |> 
+  summarise(ON_TIME = sum(ADHERENCE >= -1 & ADHERENCE <= 6, na.rm = TRUE)/ n(), 
+            LATE = sum(ADHERENCE >= 6, na.rm = TRUE)/ n(), 
+            EARLY = sum(ADHERENCE <= -1, na.rm = TRUE)/ n()) |> 
+  mutate(
+    ON_TIME = ON_TIME *100, 
+    LATE = LATE * 100, 
+    EARLY = EARLY * 100
+  ) |> 
+  filter(ON_TIME == min(ON_TIME) | ON_TIME == max(ON_TIME))
+```
+
+It's not really fair to compare operators with different number of observations with each other without taking into account the uncertainty due to small sample sizes. We could instead build a confidence interval around out estimates. Use the prop.test function to generate a confidence interval for the on-time percentage for each operator. Once you've done this, if we want to identify the best and worst operators in terms of on-time percentage you could look at those that have the highest lower bound and lowest upper bound, respectively.
+
+Now, let's take a modeling approach. Fit a multilevel logistic regression model with random effects for driver, where the target is whether a stop is on-time. Compare the operator-level random effects to what you computed using the confidence interval approach. WARNING: Make sure that OPERATOR is being treated as a factor.
+
+We still haven't considered the fact that the route is likely going to influence the likelihood of being late. Fit a logistic regression model with a random term corresponding to the OPERATOR which account for the impact of route (and if you'd like, any other variables you want to control for) by including route as a fixed effect. WARNING: Make sure that you have converted OPERATOR and ROUTE_ABBR to factors before fitting this model.
+
+Up to this point, we haven't considered the fact that observations within the same trip are likely going to be correlated. That is, if a driver is late at the first stop of a trip, they are probably going to be more likely to be late for other stops on the same route. As a result, our effective sample sizes are actually smaller for each operator. Determine for each operator the percentage of trips for which they are on-time, where on-time means that they were on time for all stops on that trip (or however you want to define an on-time trip). Does this change your evaluation of who the best and worst drivers are?
+
+Try fitting a logistic regression model where for predicting whether a trip will be on time.
+
+Another approach would be to go back to the full dataset (not aggregated by trip) and fit a model with trips nested within operators.
